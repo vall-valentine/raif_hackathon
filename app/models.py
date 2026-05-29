@@ -19,8 +19,9 @@ DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_DOTENV_PATH = PROJECT_ROOT / ".env"
 DEFAULT_PROMPT_PATH = pathlib.Path(__file__).with_name("prompts") / "red_flag_classifier.md"
-DEFAULT_TIMEOUT_SECONDS = 30.0
-DEFAULT_MAX_TOKENS = 400
+DEFAULT_TIMEOUT_SECONDS = 60.0
+DEFAULT_MAX_TOKENS = 2000
+DEFAULT_THINKING_BUDGET = 1500
 DEFAULT_VERIFY_SSL = False
 MAX_LOG_CHARS = 2000
 MIN_QUOTED_DOTENV_VALUE_LENGTH = 2
@@ -63,10 +64,6 @@ RED_FLAG_RESPONSE_FORMAT: JsonObject = {
         "schema": {
             "type": "object",
             "properties": {
-                "reasoning": {
-                    "type": "string",
-                    "description": "Краткое обоснование выбора категории (1-2 предложения).",
-                },
                 "category": {
                     "type": "string",
                     "description": "Session-level red-flag label.",
@@ -81,7 +78,7 @@ RED_FLAG_RESPONSE_FORMAT: JsonObject = {
                     ],
                 },
             },
-            "required": ["reasoning", "category"],
+            "required": ["category"],
             "additionalProperties": False,
         },
     },
@@ -301,8 +298,11 @@ def build_openrouter_payload(model_name: str, prompt_text: str, dialogue_text: s
             {"role": "system", "content": prompt_text},
             {"role": "user", "content": f"Диалог для классификации:\n\n{dialogue_text}"},
         ],
-        "temperature": 0,
         "max_tokens": DEFAULT_MAX_TOKENS,
+        "reasoning": {
+            "max_tokens": DEFAULT_THINKING_BUDGET,
+            "exclude": True,
+        },
         "response_format": RED_FLAG_RESPONSE_FORMAT,
     }
 
