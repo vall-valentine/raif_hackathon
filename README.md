@@ -59,7 +59,7 @@ cp .env.example .env
 # затем в .env: OPENROUTER_API_KEY=sk-or-...
 ```
 
-> `/check` уже использует OpenRouter-baseline из `app/models.py` со structured output через JSON Schema. Без `OPENROUTER_API_KEY` сервис безопасно возвращает пустой список red flags. Prompt лежит отдельно в `app/prompts/red_flag_classifier.md`, модель можно поменять через `OPENROUTER_MODEL` (по умолчанию `anthropic/claude-sonnet-latest`).
+> `/check` уже использует OpenRouter-baseline из `app/models.py` со structured output через JSON Schema. Диалоги режутся на budgeted overlapping chunks и проверяются параллельно; если чанки дают разные red-flag категории, запускается уточняющий запрос по полной истории. Без `OPENROUTER_API_KEY` сервис безопасно возвращает пустой список red flags. Prompt лежит отдельно в `app/prompts/red_flag_classifier.md`, модель можно поменять через `OPENROUTER_MODEL` (по умолчанию `anthropic/claude-sonnet-4-5`).
 
 ### Шаг 3. Запустите dev-сервер
 Выберите один из двух режимов:

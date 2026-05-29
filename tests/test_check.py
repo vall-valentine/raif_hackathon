@@ -22,7 +22,10 @@ def client():
 
 @pytest.fixture(autouse=True)
 def disable_llm_call(monkeypatch) -> None:
-    monkeypatch.setattr("app.routers.check.process_risk_detection", lambda _llm_client, _messages: None)
+    async def fake_process_risk_detection(_llm_client, _messages):
+        return None
+
+    monkeypatch.setattr("app.routers.check.process_risk_detection", fake_process_risk_detection)
 
 
 def assert_check_response(response_data: dict[str, typing.Any], expected_session_id: str) -> None:

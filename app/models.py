@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import math
 import os
 import pathlib
 import typing
@@ -14,9 +16,22 @@ LOGGER = logging.getLogger("uvicorn.error")
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
+DEFAULT_DOTENV_PATH = PROJECT_ROOT / ".env"
 DEFAULT_PROMPT_PATH = pathlib.Path(__file__).with_name("prompts") / "red_flag_classifier.md"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_TOKENS = 400
+DEFAULT_VERIFY_SSL = False
+MAX_LOG_CHARS = 2000
+MIN_QUOTED_DOTENV_VALUE_LENGTH = 2
+ROUND_HALF_UP_OFFSET = 0.5
+MIN_CHUNK_MESSAGES = 4
+CHUNK_OVERLAP_MESSAGES = 3
+VERY_SHORT_DIALOGUE_MESSAGES = 4
+SHORT_DIALOGUE_MESSAGES = 8
+MEDIUM_DIALOGUE_MESSAGES = 21
+LONG_DIALOGUE_MESSAGES = 28
+VERY_LONG_DIALOGUE_MESSAGES = 40
 
 CLEAN_LABEL = "clean"
 RED_FLAG_CATEGORIES: set[str] = {
@@ -29,6 +44,17 @@ RED_FLAG_CATEGORIES: set[str] = {
 }
 
 JsonObject = dict[str, typing.Any]
+DialogueMessageLike = typing.Any
+
+
+@typing.final
+class DialogueChunk(typing.NamedTuple):
+    chunk_index: int
+    start_message_index: int
+    end_message_index: int
+    chunk_text: str
+
+
 RED_FLAG_RESPONSE_FORMAT: JsonObject = {
     "type": "json_schema",
     "json_schema": {
@@ -67,42 +93,240 @@ class LLMClient:
     """Small OpenRouter chat-completions client."""
 
     def __init__(self) -> None:
-        self.api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-        self.model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+        self.api_key = _read_env_variable("OPENROUTER_API_KEY")
+        self.model = _read_env_variable("OPENROUTER_MODEL", DEFAULT_MODEL)
         self.timeout_seconds = _read_float_env("OPENROUTER_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
+        self.verify_ssl = _read_bool_env("OPENROUTER_VERIFY_SSL", DEFAULT_VERIFY_SSL)
         self.prompt_text = _load_prompt()
 
-    def process_dialogue_classification(self, dialogue_text: str) -> str | None:
-        return parse_red_flag_category(self.request_completion(dialogue_text))
-
-    def request_completion(self, dialogue_text: str) -> str | None:
-        if not self.api_key:
+    async def process_messages_classification(self, messages: typing.Sequence[DialogueMessageLike]) -> str | None:
+        dialogue_chunks = build_dialogue_chunks(messages)
+        if not dialogue_chunks:
+            LOGGER.info("Final red-flag category: %s", CLEAN_LABEL)
             return None
 
-        request_payload: JsonObject = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": self.prompt_text},
-                {"role": "user", "content": f"Диалог для классификации:\n\n{dialogue_text}"},
-            ],
-            "temperature": 0,
-            "max_tokens": DEFAULT_MAX_TOKENS,
-            "response_format": RED_FLAG_RESPONSE_FORMAT,
-        }
+        LOGGER.info("Chunked dialogue: messages=%s chunks=%s", len(messages), len(dialogue_chunks))
+        chunk_completions = await self.request_chunk_completions(dialogue_chunks)
+        chunk_categories = [
+            one_category
+            for one_category in (parse_red_flag_category(one_completion) for one_completion in chunk_completions)
+            if one_category
+        ]
+        final_category = await self.resolve_chunk_categories(messages, chunk_categories)
+        LOGGER.info("Final red-flag category: %s", final_category or CLEAN_LABEL)
+        return final_category
 
+    async def request_chunk_completions(self, dialogue_chunks: typing.Sequence[DialogueChunk]) -> list[str | None]:
+        return list(
+            await asyncio.gather(
+                *(
+                    self.request_completion_async(
+                        one_dialogue_chunk.chunk_text,
+                        request_label=(
+                            f"chunk {one_dialogue_chunk.chunk_index + 1}/{len(dialogue_chunks)} "
+                            f"messages={one_dialogue_chunk.start_message_index + 1}-"
+                            f"{one_dialogue_chunk.end_message_index + 1}"
+                        ),
+                    )
+                    for one_dialogue_chunk in dialogue_chunks
+                ),
+            ),
+        )
+
+    async def resolve_chunk_categories(
+        self,
+        messages: typing.Sequence[DialogueMessageLike],
+        chunk_categories: typing.Sequence[str],
+    ) -> str | None:
+        if not chunk_categories:
+            return None
+
+        unique_categories = get_unique_categories(chunk_categories)
+        if len(unique_categories) == 1:
+            return unique_categories[0]
+
+        LOGGER.info("Conflicting chunk categories: %s", ", ".join(unique_categories))
+        resolver_text = format_conflict_resolution_dialogue(messages, unique_categories)
+        resolver_completion = await self.request_completion_async(
+            resolver_text,
+            request_label=f"conflict resolver candidates={','.join(unique_categories)}",
+        )
+        resolver_category = parse_red_flag_category(resolver_completion)
+        if resolver_category in unique_categories:
+            return resolver_category
+
+        fallback_category = choose_first_frequent_category(chunk_categories)
+        LOGGER.warning(
+            "Conflict resolver returned %s; fallback category: %s",
+            resolver_category or CLEAN_LABEL,
+            fallback_category,
+        )
+        return fallback_category
+
+    async def request_completion_async(self, dialogue_text: str, *, request_label: str) -> str | None:
+        if not self.api_key:
+            LOGGER.warning("OPENROUTER_API_KEY is not configured; returning clean fallback")
+            return None
+
+        LOGGER.info(
+            "OpenRouter async request: %s model=%s dialogue_chars=%s structured_output=json_schema verify_ssl=%s",
+            request_label,
+            self.model,
+            len(dialogue_text),
+            self.verify_ssl,
+        )
         try:
-            response = httpx.post(
-                OPENROUTER_API_URL,
-                headers=_build_openrouter_headers(self.api_key),
-                json=request_payload,
+            async with httpx.AsyncClient(
                 timeout=self.timeout_seconds,
-            )
+                trust_env=False,
+                verify=self.verify_ssl,
+            ) as async_client:
+                response = await async_client.post(
+                    OPENROUTER_API_URL,
+                    headers=_build_openrouter_headers(self.api_key),
+                    json=build_openrouter_payload(self.model, self.prompt_text, dialogue_text),
+                )
             response.raise_for_status()
-        except httpx.HTTPError as request_error:
-            LOGGER.warning("OpenRouter request failed: %s", request_error)
+        except httpx.HTTPStatusError as request_error:
+            LOGGER.warning(
+                "OpenRouter HTTP %s response for %s: %s",
+                request_error.response.status_code,
+                request_label,
+                _format_text_for_log(request_error.response.text),
+            )
+            return None
+        except (httpx.HTTPError, OSError) as request_error:
+            LOGGER.warning("OpenRouter request failed for %s: %s", request_label, request_error)
             return None
 
         return _extract_response_content(response)
+
+
+def build_dialogue_chunks(messages: typing.Sequence[DialogueMessageLike]) -> list[DialogueChunk]:
+    message_count = len(messages)
+    if message_count == 0:
+        return []
+
+    chunk_count = choose_chunk_count(message_count)
+    window_size = calculate_chunk_window_size(message_count, chunk_count)
+    chunk_starts = get_evenly_spaced_chunk_starts(message_count - window_size, chunk_count)
+    return [
+        DialogueChunk(
+            chunk_index=one_chunk_index,
+            start_message_index=one_start_index,
+            end_message_index=one_start_index + window_size - 1,
+            chunk_text=format_dialogue_slice(messages, one_start_index, one_start_index + window_size),
+        )
+        for one_chunk_index, one_start_index in enumerate(chunk_starts)
+    ]
+
+
+def choose_chunk_count(message_count: int) -> int:
+    if message_count <= VERY_SHORT_DIALOGUE_MESSAGES:
+        return 1
+    if message_count <= SHORT_DIALOGUE_MESSAGES:
+        return 2
+    if message_count <= MEDIUM_DIALOGUE_MESSAGES:
+        return 3
+    if message_count <= LONG_DIALOGUE_MESSAGES:
+        return 4
+    if message_count <= VERY_LONG_DIALOGUE_MESSAGES:
+        return 5
+    return 6
+
+
+def calculate_chunk_window_size(message_count: int, chunk_count: int) -> int:
+    if message_count <= SHORT_DIALOGUE_MESSAGES:
+        return min(message_count, MIN_CHUNK_MESSAGES)
+
+    overlapping_message_count = (chunk_count - 1) * CHUNK_OVERLAP_MESSAGES
+    return min(
+        message_count,
+        max(MIN_CHUNK_MESSAGES, math.ceil((message_count + overlapping_message_count) / chunk_count)),
+    )
+
+
+def get_evenly_spaced_chunk_starts(max_start_index: int, chunk_count: int) -> list[int]:
+    if chunk_count == 1 or max_start_index <= 0:
+        return [0]
+
+    chunk_starts: list[int] = []
+    for one_step_index in range(chunk_count):
+        one_start_index = math.floor(
+            (one_step_index * max_start_index / (chunk_count - 1)) + ROUND_HALF_UP_OFFSET,
+        )
+        if one_start_index not in chunk_starts:
+            chunk_starts.append(one_start_index)
+
+    for one_candidate_start in range(max_start_index + 1):
+        if len(chunk_starts) >= chunk_count:
+            break
+        if one_candidate_start not in chunk_starts:
+            chunk_starts.append(one_candidate_start)
+
+    return sorted(chunk_starts[:chunk_count])
+
+
+def format_dialogue_slice(
+    messages: typing.Sequence[DialogueMessageLike],
+    start_message_index: int,
+    stop_message_index: int,
+) -> str:
+    return "\n".join(
+        f"{one_message_index + 1}. {one_message.role}: {one_message.content}"
+        for one_message_index, one_message in enumerate(
+            messages[start_message_index:stop_message_index],
+            start=start_message_index,
+        )
+    )
+
+
+def format_conflict_resolution_dialogue(
+    messages: typing.Sequence[DialogueMessageLike],
+    unique_categories: typing.Sequence[str],
+) -> str:
+    return (
+        "Уточняющая классификация полной истории.\n"
+        f"chunk-классификация выбрала разные red-flag категории: {', '.join(unique_categories)}.\n"
+        "Нужно выбрать одну итоговую red-flag категорию для всей сессии. "
+        "Проанализируй полную историю и выбери главный риск из категорий-кандидатов.\n\n"
+        f"Полная история:\n{format_dialogue_slice(messages, 0, len(messages))}"
+    )
+
+
+def build_openrouter_payload(model_name: str, prompt_text: str, dialogue_text: str) -> JsonObject:
+    return {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": prompt_text},
+            {"role": "user", "content": f"Диалог для классификации:\n\n{dialogue_text}"},
+        ],
+        "temperature": 0,
+        "max_tokens": DEFAULT_MAX_TOKENS,
+        "response_format": RED_FLAG_RESPONSE_FORMAT,
+    }
+
+
+def get_unique_categories(categories: typing.Sequence[str]) -> list[str]:
+    unique_categories: list[str] = []
+    for one_category in categories:
+        if one_category not in unique_categories:
+            unique_categories.append(one_category)
+    return unique_categories
+
+
+def choose_first_frequent_category(categories: typing.Sequence[str]) -> str:
+    category_counts: dict[str, int] = {}
+    for one_category in categories:
+        category_counts[one_category] = category_counts.get(one_category, 0) + 1
+
+    best_category = categories[0]
+    best_category_count = category_counts[best_category]
+    for one_category, one_category_count in category_counts.items():
+        if one_category_count > best_category_count:
+            best_category = one_category
+            best_category_count = one_category_count
+    return best_category
 
 
 def parse_red_flag_category(completion_text: str | None) -> str | None:
@@ -116,20 +340,22 @@ def parse_red_flag_category(completion_text: str | None) -> str | None:
 
     normalized_category = category.strip().lower()
     if normalized_category in {CLEAN_LABEL, "", "none", "null"}:
+        LOGGER.info("OpenRouter parsed category: clean")
         return None
     if normalized_category in RED_FLAG_CATEGORIES:
+        LOGGER.info("OpenRouter parsed category: %s", normalized_category)
         return normalized_category
 
     LOGGER.warning("OpenRouter returned unsupported red-flag category: %s", category)
     return None
 
 
-def process_risk_detection(
+async def process_risk_detection(
     llm_client: LLMClient,
-    messages: str,
+    messages: typing.Sequence[DialogueMessageLike],
 ) -> dict[str, str] | None:
-    """Classifies one already formatted dialogue and returns evaluator-compatible output."""
-    category = llm_client.process_dialogue_classification(messages)
+    """Classify one dialogue and return evaluator-compatible output."""
+    category = await llm_client.process_messages_classification(messages)
     if category is None:
         return None
     return {"category": category}
@@ -141,7 +367,7 @@ def load_llm() -> LLMClient:
 
 
 def _load_prompt() -> str:
-    prompt_path = pathlib.Path(os.getenv("RED_FLAG_PROMPT_PATH", DEFAULT_PROMPT_PATH))
+    prompt_path = pathlib.Path(_read_env_variable("RED_FLAG_PROMPT_PATH", str(DEFAULT_PROMPT_PATH)))
     try:
         return prompt_path.read_text(encoding="utf-8")
     except OSError as prompt_error:
@@ -149,13 +375,43 @@ def _load_prompt() -> str:
         return "Classify the dialogue as clean or one red-flag category. Return JSON with key category."
 
 
+def _read_env_variable(variable_name: str, default_value: str = "") -> str:
+    env_value = os.getenv(variable_name, "").strip()
+    if env_value:
+        return env_value
+    return _read_dotenv_value(variable_name) or default_value
+
+
+def _read_dotenv_value(variable_name: str) -> str:
+    try:
+        dotenv_lines = DEFAULT_DOTENV_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+
+    variable_prefix = f"{variable_name}="
+    for one_dotenv_line in dotenv_lines:
+        normalized_line = one_dotenv_line.strip()
+        if not normalized_line or normalized_line.startswith("#") or not normalized_line.startswith(variable_prefix):
+            continue
+        return _remove_dotenv_quotes(normalized_line.removeprefix(variable_prefix).strip())
+    return ""
+
+
+def _remove_dotenv_quotes(raw_value: str) -> str:
+    if len(raw_value) < MIN_QUOTED_DOTENV_VALUE_LENGTH:
+        return raw_value
+    if raw_value[0] == raw_value[-1] and raw_value[0] in {'"', "'"}:
+        return raw_value[1:-1]
+    return raw_value
+
+
 def _build_openrouter_headers(openrouter_api_key: str) -> dict[str, str]:
     request_headers = {
         "Authorization": f"Bearer {openrouter_api_key}",
         "Content-Type": "application/json",
     }
-    referer_header = os.getenv("OPENROUTER_SITE_URL", "").strip()
-    app_name = os.getenv("OPENROUTER_APP_NAME", "Red Flag Detector").strip()
+    referer_header = _read_env_variable("OPENROUTER_SITE_URL")
+    app_name = _read_env_variable("OPENROUTER_APP_NAME", "Red Flag Detector")
     if referer_header:
         request_headers["HTTP-Referer"] = referer_header
     if app_name:
@@ -164,7 +420,7 @@ def _build_openrouter_headers(openrouter_api_key: str) -> dict[str, str]:
 
 
 def _read_float_env(variable_name: str, default_value: float) -> float:
-    raw_value = os.getenv(variable_name, "").strip()
+    raw_value = _read_env_variable(variable_name)
     if not raw_value:
         return default_value
     try:
@@ -172,6 +428,18 @@ def _read_float_env(variable_name: str, default_value: float) -> float:
     except ValueError:
         LOGGER.warning("Invalid %s=%r, using %s", variable_name, raw_value, default_value)
         return default_value
+
+
+def _read_bool_env(variable_name: str, default_value: bool) -> bool:
+    raw_value = _read_env_variable(variable_name).lower()
+    if not raw_value:
+        return default_value
+    if raw_value in {"1", "true", "yes", "y", "on"}:
+        return True
+    if raw_value in {"0", "false", "no", "n", "off"}:
+        return False
+    LOGGER.warning("Invalid %s=%r, using %s", variable_name, raw_value, default_value)
+    return default_value
 
 
 def _extract_message_content(response_data: JsonObject) -> str | None:
@@ -210,7 +478,18 @@ def _extract_response_content(response: httpx.Response) -> str | None:
         LOGGER.warning("OpenRouter returned unexpected response shape: %r", response_data)
         return None
 
-    return _extract_message_content(typing.cast("JsonObject", response_data))
+    completion_text = _extract_message_content(typing.cast("JsonObject", response_data))
+    if completion_text:
+        LOGGER.info("OpenRouter raw message content: %s", _format_text_for_log(completion_text))
+    else:
+        LOGGER.warning("OpenRouter response has no message content: %s", _format_text_for_log(str(response_data)))
+    return completion_text
+
+
+def _format_text_for_log(raw_text: str) -> str:
+    if len(raw_text) <= MAX_LOG_CHARS:
+        return raw_text
+    return f"{raw_text[:MAX_LOG_CHARS]}...<truncated>"
 
 
 def _extract_text_block(content_block: object) -> str | None:

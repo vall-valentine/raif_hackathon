@@ -44,15 +44,13 @@ class DialogueCheckResponse(BaseModel):
 
 
 @check_router.post("/check")
-def check_dialogue(
+async def check_dialogue(
     http_request: Request,
     request_body: DialogueCheckRequest,
 ) -> DialogueCheckResponse:
     start_time = time.perf_counter()
 
-    raw_text = format_dialogue(request_body.messages)
-
-    response = process_risk_detection(http_request.app.state.llm_client, raw_text)
+    response = await process_risk_detection(http_request.app.state.llm_client, request_body.messages)
     predicted_red_flags = [RedFlagItem(category=response["category"])] if response else []
 
     processing_time_ms = int((time.perf_counter() - start_time) * 1000)
