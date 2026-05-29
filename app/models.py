@@ -15,8 +15,9 @@ LOGGER = logging.getLogger("uvicorn.error")
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
 DEFAULT_PROMPT_PATH = pathlib.Path(__file__).with_name("prompts") / "red_flag_classifier.md"
-DEFAULT_TIMEOUT_SECONDS = 30.0
-DEFAULT_MAX_TOKENS = 400
+DEFAULT_TIMEOUT_SECONDS = 60.0
+DEFAULT_MAX_TOKENS = 2000
+DEFAULT_THINKING_BUDGET = 1500
 
 CLEAN_LABEL = "clean"
 RED_FLAG_CATEGORIES: set[str] = {
@@ -37,10 +38,6 @@ RED_FLAG_RESPONSE_FORMAT: JsonObject = {
         "schema": {
             "type": "object",
             "properties": {
-                "reasoning": {
-                    "type": "string",
-                    "description": "Краткое обоснование выбора категории (1-2 предложения).",
-                },
                 "category": {
                     "type": "string",
                     "description": "Session-level red-flag label.",
@@ -55,7 +52,7 @@ RED_FLAG_RESPONSE_FORMAT: JsonObject = {
                     ],
                 },
             },
-            "required": ["reasoning", "category"],
+            "required": ["category"],
             "additionalProperties": False,
         },
     },
@@ -85,8 +82,11 @@ class LLMClient:
                 {"role": "system", "content": self.prompt_text},
                 {"role": "user", "content": f"Диалог для классификации:\n\n{dialogue_text}"},
             ],
-            "temperature": 0,
             "max_tokens": DEFAULT_MAX_TOKENS,
+            "thinking": {
+                "type": "enabled",
+                "budget_tokens": DEFAULT_THINKING_BUDGET,
+            },
             "response_format": RED_FLAG_RESPONSE_FORMAT,
         }
 
