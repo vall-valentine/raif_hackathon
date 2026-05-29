@@ -20,6 +20,11 @@ def client():
         yield test_client
 
 
+@pytest.fixture(autouse=True)
+def disable_llm_call(monkeypatch) -> None:
+    monkeypatch.setattr("app.routers.check.process_risk_detection", lambda _llm_client, _messages: None)
+
+
 def assert_check_response(response_data: dict[str, typing.Any], expected_session_id: str) -> None:
     assert response_data["session_id"] == expected_session_id
 

@@ -59,7 +59,7 @@ cp .env.example .env
 # затем в .env: OPENROUTER_API_KEY=sk-or-...
 ```
 
-> **Ключ потребуется для деплоя и после замены заглушки реальным вызовом LLM.** В текущем boilerplate `process_risk_detection` в `app/models.py` — демонстрационная заглушка: возвращает фиксированные категории для первых 5 запросов и `None` далее. `LLMClient` создаётся в `lifespan`, но не вызывается. Это сделано намеренно — заглушку необходимо переписать под собственную логику детекции; запустить и протестировать пайплайн `/check` можно сразу, без ключа.
+> `/check` уже использует OpenRouter-baseline из `app/models.py` со structured output через JSON Schema. Без `OPENROUTER_API_KEY` сервис безопасно возвращает пустой список red flags. Prompt лежит отдельно в `app/prompts/red_flag_classifier.md`, модель можно поменять через `OPENROUTER_MODEL` (по умолчанию `anthropic/claude-sonnet-latest`).
 
 ### Шаг 3. Запустите dev-сервер
 Выберите один из двух режимов:
@@ -121,7 +121,7 @@ curl -X POST "http://localhost:8787/check" \
 }
 ```
 
-> Это иллюстрация **структуры** ответа, а не дословный вывод заглушки. Реальные значения `category` и `processing_time_ms` зависят от вашей логики детекции; у демонстрационной заглушки время близко к `0`, а категории заданы жёстко только для первых запросов.
+> Это иллюстрация **структуры** ответа. Реальные значения `category` и `processing_time_ms` зависят от ответа OpenRouter-модели и качества prompt'а.
 
 `RedFlagItem` содержит только поле `category` (строка ≤4096 символов), общее число элементов в `predicted_red_flags` — ≤200. Контракт проверяется в `tests/test_check.py` (схема `CheckResponse` + `RedFlagItem`).
 
@@ -178,7 +178,8 @@ raif_hackathon_boilerplate/
 │   │   ├── health.py        # GET /health
 │   │   └── check.py         # POST /check (контракт с evaluator'ом)
 │   ├── main.py              # Точка входа в приложение и настройки lifespan
-│   └── models.py            # LLM-клиент (OpenRouter) и заглушка детектора
+│   ├── models.py            # LLM-клиент (OpenRouter) и классификатор
+│   └── prompts/             # Редактируемые prompt-файлы
 ├── tests/                   # Контрактные тесты пайплайна (pytest)
 │   └── test_check.py        # Проверка контракта ответа (CheckResponse + RedFlagItem)
 ├── .env.example             # Шаблон переменных окружения (копируется в .env)
