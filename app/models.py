@@ -17,7 +17,7 @@ DEFAULT_MODEL = "anthropic/claude-opus-4.8"
 DEFAULT_PROMPT_PATH = pathlib.Path(__file__).with_name("prompts") / "red_flag_classifier.md"
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_MAX_TOKENS = 2000
-DEFAULT_THINKING_BUDGET = 1500
+DEFAULT_REASONING_EFFORT = "xhigh"
 
 CLEAN_LABEL = "clean"
 RED_FLAG_CATEGORIES: set[str] = {
@@ -67,6 +67,7 @@ class LLMClient:
         self.api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
         self.model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
         self.timeout_seconds = _read_float_env("OPENROUTER_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
+        self.reasoning_effort = os.getenv("OPENROUTER_REASONING_EFFORT", DEFAULT_REASONING_EFFORT).strip()
         self.prompt_text = _load_prompt()
 
     def process_dialogue_classification(self, dialogue_text: str) -> str | None:
@@ -83,9 +84,9 @@ class LLMClient:
                 {"role": "user", "content": f"Диалог для классификации:\n\n{dialogue_text}"},
             ],
             "max_tokens": DEFAULT_MAX_TOKENS,
-            "thinking": {
-                "type": "enabled",
-                "budget_tokens": DEFAULT_THINKING_BUDGET,
+            "reasoning": {
+                "effort": self.reasoning_effort,
+                "exclude": True,
             },
             "response_format": RED_FLAG_RESPONSE_FORMAT,
         }
