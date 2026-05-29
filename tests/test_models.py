@@ -55,10 +55,12 @@ def test_build_dialogue_chunks_more_than_forty_messages() -> None:
 
 def test_conflicting_chunk_categories_use_full_history_resolver(monkeypatch) -> None:
     request_labels: list[str] = []
+    request_texts: list[str] = []
     client = LLMClient()
 
-    async def fake_request_completion(_dialogue_text: str, *, request_label: str) -> str:
+    async def fake_request_completion(dialogue_text: str, *, request_label: str) -> str:
         request_labels.append(request_label)
+        request_texts.append(dialogue_text)
         if "conflict resolver" in request_label:
             return '{"reasoning":"full history resolves conflict","category":"policy_manipulation"}'
         if "chunk 1" in request_label:
@@ -69,3 +71,5 @@ def test_conflicting_chunk_categories_use_full_history_resolver(monkeypatch) -> 
 
     assert asyncio.run(client.process_messages_classification(make_messages(9))) == "policy_manipulation"
     assert any("conflict resolver" in one_request_label for one_request_label in request_labels)
+    assert "previous" not in request_texts[0].lower()
+    assert '"category":"transaction_coercion"' in request_texts[1]

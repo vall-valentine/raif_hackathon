@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import math
@@ -98,7 +97,7 @@ class LLMClient:
             return None
 
         LOGGER.info("Chunked dialogue: messages=%s chunks=%s", len(messages), len(dialogue_chunks))
-        chunk_completions = await self.request_chunk_completions(dialogue_chunks)
+        chunk_completions = await self.request_chunk_completions_sequentially(dialogue_chunks)
         chunk_categories = [
             one_category
             for one_category in (parse_red_flag_category(one_completion) for one_completion in chunk_completions)
@@ -108,22 +107,24 @@ class LLMClient:
         LOGGER.info("Final red-flag category: %s", final_category or CLEAN_LABEL)
         return final_category
 
-    async def request_chunk_completions(self, dialogue_chunks: typing.Sequence[DialogueChunk]) -> list[str | None]:
-        return list(
-            await asyncio.gather(
-                *(
-                    self.request_completion_async(
-                        one_dialogue_chunk.chunk_text,
-                        request_label=(
-                            f"chunk {one_dialogue_chunk.chunk_index + 1}/{len(dialogue_chunks)} "
-                            f"messages={one_dialogue_chunk.start_message_index + 1}-"
-                            f"{one_dialogue_chunk.end_message_index + 1}"
-                        ),
-                    )
-                    for one_dialogue_chunk in dialogue_chunks
+    async def request_chunk_completions_sequentially(
+        self,
+        dialogue_chunks: typing.Sequence[DialogueChunk],
+    ) -> list[str | None]:
+        chunk_completions: list[str | None] = []
+        for one_dialogue_chunk in dialogue_chunks:
+            request_text = format_chunk_request_with_previous_results(one_dialogue_chunk, chunk_completions)
+            chunk_completions.append(
+                await self.request_completion_async(
+                    request_text,
+                    request_label=(
+                        f"chunk {one_dialogue_chunk.chunk_index + 1}/{len(dialogue_chunks)} "
+                        f"messages={one_dialogue_chunk.start_message_index + 1}-"
+                        f"{one_dialogue_chunk.end_message_index + 1}"
+                    ),
                 ),
-            ),
-        )
+            )
+        return chunk_completions
 
     async def resolve_chunk_categories(
         self,
@@ -226,6 +227,35 @@ def build_chunk_ranges(message_count: int) -> list[tuple[int, int]]:
         max(MIN_CHUNK_MESSAGES, math.ceil((message_count + CHUNK_OVERLAP_MESSAGES) / 2)),
     )
     return [(0, first_stop_index), (max(0, first_stop_index - CHUNK_OVERLAP_MESSAGES), message_count)]
+
+
+def format_chunk_request_with_previous_results(
+    dialogue_chunk: DialogueChunk,
+    previous_completions: typing.Sequence[str | None],
+) -> str:
+    if not previous_completions:
+        return dialogue_chunk.chunk_text
+
+    return (
+        "Это следующий chunk той же диалоговой сессии.\n"
+        "Ниже даны предыдущие решения модели по уже просмотренным chunks. "
+        "Используй их как контекст, но классифицируй текущий chunk по тем же правилам.\n\n"
+        f"{format_previous_chunk_results(previous_completions)}\n\n"
+        f"Текущий chunk:\n{dialogue_chunk.chunk_text}"
+    )
+
+
+def format_previous_chunk_results(previous_completions: typing.Sequence[str | None]) -> str:
+    return "\n".join(
+        f"chunk {one_completion_index + 1}: {format_previous_completion(one_completion)}"
+        for one_completion_index, one_completion in enumerate(previous_completions)
+    )
+
+
+def format_previous_completion(completion_text: str | None) -> str:
+    if not completion_text:
+        return '{"category": "clean"}'
+    return _format_text_for_log(completion_text)
 
 
 def format_dialogue_slice(
