@@ -25,14 +25,9 @@ DEFAULT_THINKING_BUDGET = 1500
 DEFAULT_VERIFY_SSL = False
 MAX_LOG_CHARS = 2000
 MIN_QUOTED_DOTENV_VALUE_LENGTH = 2
-ROUND_HALF_UP_OFFSET = 0.5
 MIN_CHUNK_MESSAGES = 4
 CHUNK_OVERLAP_MESSAGES = 3
 VERY_SHORT_DIALOGUE_MESSAGES = 4
-SHORT_DIALOGUE_MESSAGES = 8
-MEDIUM_DIALOGUE_MESSAGES = 21
-LONG_DIALOGUE_MESSAGES = 28
-VERY_LONG_DIALOGUE_MESSAGES = 40
 
 CLEAN_LABEL = "clean"
 RED_FLAG_CATEGORIES: set[str] = {
@@ -204,64 +199,33 @@ def build_dialogue_chunks(messages: typing.Sequence[DialogueMessageLike]) -> lis
     if message_count == 0:
         return []
 
-    chunk_count = choose_chunk_count(message_count)
-    window_size = calculate_chunk_window_size(message_count, chunk_count)
-    chunk_starts = get_evenly_spaced_chunk_starts(message_count - window_size, chunk_count)
+    chunk_ranges = build_chunk_ranges(message_count)
     return [
         DialogueChunk(
             chunk_index=one_chunk_index,
             start_message_index=one_start_index,
-            end_message_index=one_start_index + window_size - 1,
-            chunk_text=format_dialogue_slice(messages, one_start_index, one_start_index + window_size),
+            end_message_index=one_stop_index - 1,
+            chunk_text=format_dialogue_slice(messages, one_start_index, one_stop_index),
         )
-        for one_chunk_index, one_start_index in enumerate(chunk_starts)
+        for one_chunk_index, (one_start_index, one_stop_index) in enumerate(chunk_ranges)
     ]
 
 
 def choose_chunk_count(message_count: int) -> int:
     if message_count <= VERY_SHORT_DIALOGUE_MESSAGES:
         return 1
-    if message_count <= SHORT_DIALOGUE_MESSAGES:
-        return 2
-    if message_count <= MEDIUM_DIALOGUE_MESSAGES:
-        return 3
-    if message_count <= LONG_DIALOGUE_MESSAGES:
-        return 4
-    if message_count <= VERY_LONG_DIALOGUE_MESSAGES:
-        return 5
-    return 6
+    return 2
 
 
-def calculate_chunk_window_size(message_count: int, chunk_count: int) -> int:
-    if message_count <= SHORT_DIALOGUE_MESSAGES:
-        return min(message_count, MIN_CHUNK_MESSAGES)
+def build_chunk_ranges(message_count: int) -> list[tuple[int, int]]:
+    if choose_chunk_count(message_count) == 1:
+        return [(0, message_count)]
 
-    overlapping_message_count = (chunk_count - 1) * CHUNK_OVERLAP_MESSAGES
-    return min(
+    first_stop_index = min(
         message_count,
-        max(MIN_CHUNK_MESSAGES, math.ceil((message_count + overlapping_message_count) / chunk_count)),
+        max(MIN_CHUNK_MESSAGES, math.ceil((message_count + CHUNK_OVERLAP_MESSAGES) / 2)),
     )
-
-
-def get_evenly_spaced_chunk_starts(max_start_index: int, chunk_count: int) -> list[int]:
-    if chunk_count == 1 or max_start_index <= 0:
-        return [0]
-
-    chunk_starts: list[int] = []
-    for one_step_index in range(chunk_count):
-        one_start_index = math.floor(
-            (one_step_index * max_start_index / (chunk_count - 1)) + ROUND_HALF_UP_OFFSET,
-        )
-        if one_start_index not in chunk_starts:
-            chunk_starts.append(one_start_index)
-
-    for one_candidate_start in range(max_start_index + 1):
-        if len(chunk_starts) >= chunk_count:
-            break
-        if one_candidate_start not in chunk_starts:
-            chunk_starts.append(one_candidate_start)
-
-    return sorted(chunk_starts[:chunk_count])
+    return [(0, first_stop_index), (max(0, first_stop_index - CHUNK_OVERLAP_MESSAGES), message_count)]
 
 
 def format_dialogue_slice(

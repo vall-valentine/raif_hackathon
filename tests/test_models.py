@@ -44,16 +44,13 @@ def test_build_dialogue_chunks_long_overlap() -> None:
     dialogue_chunks = build_dialogue_chunks(make_messages(36))
 
     assert [(one_chunk.start_message_index + 1, one_chunk.end_message_index + 1) for one_chunk in dialogue_chunks] == [
-        (1, 10),
-        (8, 17),
-        (14, 23),
-        (21, 30),
-        (27, 36),
+        (1, 20),
+        (18, 36),
     ]
 
 
 def test_build_dialogue_chunks_more_than_forty_messages() -> None:
-    assert len(build_dialogue_chunks(make_messages(41))) == 6
+    assert len(build_dialogue_chunks(make_messages(41))) == 2
 
 
 def test_conflicting_chunk_categories_use_full_history_resolver(monkeypatch) -> None:
