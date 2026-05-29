@@ -13,10 +13,10 @@ import httpx
 LOGGER = logging.getLogger("uvicorn.error")
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "anthropic/claude-sonnet-latest"
+DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
 DEFAULT_PROMPT_PATH = pathlib.Path(__file__).with_name("prompts") / "red_flag_classifier.md"
-DEFAULT_TIMEOUT_SECONDS = 25.0
-DEFAULT_MAX_TOKENS = 80
+DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_MAX_TOKENS = 400
 
 CLEAN_LABEL = "clean"
 RED_FLAG_CATEGORIES: set[str] = {
@@ -37,6 +37,10 @@ RED_FLAG_RESPONSE_FORMAT: JsonObject = {
         "schema": {
             "type": "object",
             "properties": {
+                "reasoning": {
+                    "type": "string",
+                    "description": "Краткое обоснование выбора категории (1-2 предложения).",
+                },
                 "category": {
                     "type": "string",
                     "description": "Session-level red-flag label.",
@@ -51,7 +55,7 @@ RED_FLAG_RESPONSE_FORMAT: JsonObject = {
                     ],
                 },
             },
-            "required": ["category"],
+            "required": ["reasoning", "category"],
             "additionalProperties": False,
         },
     },
