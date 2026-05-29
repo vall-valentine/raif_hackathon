@@ -15,7 +15,7 @@ import httpx
 LOGGER = logging.getLogger("uvicorn.error")
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
+DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_DOTENV_PATH = PROJECT_ROOT / ".env"
 DEFAULT_PROMPT_PATH = pathlib.Path(__file__).with_name("prompts") / "red_flag_classifier.md"
