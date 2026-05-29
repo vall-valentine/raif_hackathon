@@ -13,11 +13,11 @@ import httpx
 LOGGER = logging.getLogger("uvicorn.error")
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "anthropic/claude-opus-4-8"
+DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
 DEFAULT_PROMPT_PATH = pathlib.Path(__file__).with_name("prompts") / "red_flag_classifier.md"
-DEFAULT_TIMEOUT_SECONDS = 60.0
-DEFAULT_MAX_TOKENS = 2000
-DEFAULT_THINKING_BUDGET = 1500
+DEFAULT_TIMEOUT_SECONDS = 90.0
+DEFAULT_MAX_TOKENS = 4000
+DEFAULT_THINKING_BUDGET = 3000
 
 CLEAN_LABEL = "clean"
 RED_FLAG_CATEGORIES: set[str] = {
