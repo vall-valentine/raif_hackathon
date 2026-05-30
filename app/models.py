@@ -14,7 +14,7 @@ LOGGER = logging.getLogger("uvicorn.error")
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-DEFAULT_MODEL = "anthropic/claude-opus-4-6"
+DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
 DEFAULT_PROMPT_PATH = pathlib.Path(__file__).with_name("prompts") / "red_flag_classifier.md"
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_MAX_TOKENS = 16000
