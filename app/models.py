@@ -12,12 +12,14 @@ import httpx
 
 LOGGER = logging.getLogger("uvicorn.error")
 
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
+DEFAULT_OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
 DEFAULT_PROMPT_PATH = pathlib.Path(__file__).with_name("prompts") / "red_flag_classifier.md"
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_MAX_TOKENS = 2000
 DEFAULT_THINKING_BUDGET = 1500
+DEFAULT_APP_NAME = "Red Flag Detector"
+DEFAULT_SITE_URL = ""
 
 CLEAN_LABEL = "clean"
 RED_FLAG_CATEGORIES: set[str] = {
@@ -65,8 +67,11 @@ class LLMClient:
 
     def __init__(self) -> None:
         self.api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        self.api_url = os.getenv("OPENROUTER_API_URL", DEFAULT_OPENROUTER_API_URL).strip() or DEFAULT_OPENROUTER_API_URL
         self.model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
         self.timeout_seconds = _read_float_env("OPENROUTER_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
+        self.max_tokens = _read_int_env("OPENROUTER_MAX_TOKENS", DEFAULT_MAX_TOKENS)
+        self.thinking_budget = _read_int_env("OPENROUTER_THINKING_BUDGET", DEFAULT_THINKING_BUDGET)
         self.prompt_text = _load_prompt()
 
     def process_dialogue_classification(self, dialogue_text: str) -> str | None:
@@ -82,17 +87,17 @@ class LLMClient:
                 {"role": "system", "content": self.prompt_text},
                 {"role": "user", "content": f"Диалог для классификации:\n\n{dialogue_text}"},
             ],
-            "max_tokens": DEFAULT_MAX_TOKENS,
+            "max_tokens": self.max_tokens,
             "thinking": {
                 "type": "enabled",
-                "budget_tokens": DEFAULT_THINKING_BUDGET,
+                "budget_tokens": self.thinking_budget,
             },
             "response_format": RED_FLAG_RESPONSE_FORMAT,
         }
 
         try:
             response = httpx.post(
-                OPENROUTER_API_URL,
+                self.api_url,
                 headers=_build_openrouter_headers(self.api_key),
                 json=request_payload,
                 timeout=self.timeout_seconds,
@@ -154,13 +159,24 @@ def _build_openrouter_headers(openrouter_api_key: str) -> dict[str, str]:
         "Authorization": f"Bearer {openrouter_api_key}",
         "Content-Type": "application/json",
     }
-    referer_header = os.getenv("OPENROUTER_SITE_URL", "").strip()
-    app_name = os.getenv("OPENROUTER_APP_NAME", "Red Flag Detector").strip()
+    referer_header = os.getenv("OPENROUTER_SITE_URL", DEFAULT_SITE_URL).strip()
+    app_name = os.getenv("OPENROUTER_APP_NAME", DEFAULT_APP_NAME).strip()
     if referer_header:
         request_headers["HTTP-Referer"] = referer_header
     if app_name:
         request_headers["X-Title"] = app_name
     return request_headers
+
+
+def _read_int_env(variable_name: str, default_value: int) -> int:
+    raw_value = os.getenv(variable_name, "").strip()
+    if not raw_value:
+        return default_value
+    try:
+        return int(raw_value)
+    except ValueError:
+        LOGGER.warning("Invalid %s=%r, using %s", variable_name, raw_value, default_value)
+        return default_value
 
 
 def _read_float_env(variable_name: str, default_value: float) -> float:

@@ -7,11 +7,14 @@ services:
       - "8787:8000"
     environment:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      # HF-режим (опционально):
-      # HF_TOKEN: ${HF_TOKEN:-}
-    # HF-режим (опционально):
-    # volumes:
-    #   - model_cache:/app/model_cache
+      OPENROUTER_API_URL: ${OPENROUTER_API_URL:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
+      OPENROUTER_TIMEOUT_SECONDS: ${OPENROUTER_TIMEOUT_SECONDS:-}
+      OPENROUTER_MAX_TOKENS: ${OPENROUTER_MAX_TOKENS:-}
+      OPENROUTER_THINKING_BUDGET: ${OPENROUTER_THINKING_BUDGET:-}
+      OPENROUTER_APP_NAME: ${OPENROUTER_APP_NAME:-}
+      OPENROUTER_SITE_URL: ${OPENROUTER_SITE_URL:-}
+      RED_FLAG_PROMPT_PATH: ${RED_FLAG_PROMPT_PATH:-}
     command: uvicorn app.main:application --host 0.0.0.0 --port 8000 --reload
     develop:
       watch:
@@ -23,7 +26,3 @@ services:
             - "*.pyc"
         - action: rebuild
           path: pyproject.toml
-
-# HF-режим: раскомментируйте для кеша моделей
-# volumes:
-#   model_cache:
