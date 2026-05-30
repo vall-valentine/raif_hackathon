@@ -15,7 +15,7 @@ import httpx
 LOGGER = logging.getLogger("uvicorn.error")
 
 DEFAULT_OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "anthropic/claude-opus-4.8"
+DEFAULT_MODEL = "anthropic/claude-sonnet-4.6"
 DEFAULT_PROMPT_PATH = pathlib.Path(__file__).with_name("prompts") / "red_flag_classifier.md"
 DEFAULT_TRAIN_EXAMPLES_PATH = DEFAULT_PROMPT_PATH.with_name("train_examples.json")
 DEFAULT_TIMEOUT_SECONDS = 60.0
