@@ -18,6 +18,7 @@ DEFAULT_PROMPT_PATH = pathlib.Path(__file__).with_name("prompts") / "red_flag_cl
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_MAX_TOKENS = 2000
 DEFAULT_THINKING_BUDGET = 1500
+DEFAULT_VERIFY_SSL = False
 DEFAULT_APP_NAME = "Red Flag Detector"
 DEFAULT_SITE_URL = ""
 
@@ -72,6 +73,7 @@ class LLMClient:
         self.timeout_seconds = _read_float_env("OPENROUTER_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
         self.max_tokens = _read_int_env("OPENROUTER_MAX_TOKENS", DEFAULT_MAX_TOKENS)
         self.thinking_budget = _read_int_env("OPENROUTER_THINKING_BUDGET", DEFAULT_THINKING_BUDGET)
+        self.verify_ssl = _read_bool_env("OPENROUTER_VERIFY_SSL", DEFAULT_VERIFY_SSL)
         self.prompt_text = _load_prompt()
 
     def process_dialogue_classification(self, dialogue_text: str) -> str | None:
@@ -101,6 +103,7 @@ class LLMClient:
                 headers=_build_openrouter_headers(self.api_key),
                 json=request_payload,
                 timeout=self.timeout_seconds,
+                verify=self.verify_ssl,
             )
             response.raise_for_status()
         except httpx.HTTPError as request_error:
@@ -188,6 +191,18 @@ def _read_float_env(variable_name: str, default_value: float) -> float:
     except ValueError:
         LOGGER.warning("Invalid %s=%r, using %s", variable_name, raw_value, default_value)
         return default_value
+
+
+def _read_bool_env(variable_name: str, default_value: bool) -> bool:
+    raw_value = os.getenv(variable_name, "").strip().lower()
+    if not raw_value:
+        return default_value
+    if raw_value in {"1", "true", "yes", "y", "on"}:
+        return True
+    if raw_value in {"0", "false", "no", "n", "off"}:
+        return False
+    LOGGER.warning("Invalid %s=%r, using %s", variable_name, raw_value, default_value)
+    return default_value
 
 
 def _extract_message_content(response_data: JsonObject) -> str | None:
