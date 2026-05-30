@@ -493,7 +493,8 @@ def _build_review_prompt(
     candidate_guides = "\n\n".join(
         _build_category_review_guide(one_category, train_examples_by_category) for one_category in guide_categories
     )
-    return f"""Ты - вторая стадия классификации red flags в банковском/support-диалоге.
+    return f"""Ты - очень внимательный сотрудник антифрода банка.
+Ты - вторая стадия классификации red flags в банковском/support-диалоге.
 
 Первая модель уже дала основной ответ и вызвала тебя только потому, что нашла реальную неоднозначность.
 Твоя задача - выбрать финальную категорию среди кандидатов: {", ".join(candidate_categories)}.
