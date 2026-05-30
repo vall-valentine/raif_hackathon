@@ -372,7 +372,7 @@ def test_request_review_completion_posts_candidate_prompt_and_schema(monkeypatch
     client = LLMClient.__new__(LLMClient)
     client.api_key = "test-key"
     client.api_url = "https://openrouter.test/chat/completions"
-    client.review_model = "anthropic/claude-opus-4.8"
+    client.review_model = "anthropic/claude-sonnet-4.6"
     client.review_timeout_seconds = 3.0
     client.review_max_tokens = 100
     client.review_thinking_budget = 50
