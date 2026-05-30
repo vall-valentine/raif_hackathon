@@ -90,7 +90,7 @@ class LLMClient:
                 {"role": "user", "content": f"Диалог для классификации:\n\n{dialogue_text}"},
             ],
             "max_tokens": self.max_tokens,
-            "temperature": 0.0,
+            "temperature": 1.0,
             "thinking": {
                 "type": "enabled",
                 "budget_tokens": self.thinking_budget,
